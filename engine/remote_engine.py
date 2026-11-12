@@ -1,7 +1,8 @@
 """
 Remote LLM engine backed by a vLLM OpenAI-compatible HTTP API.
 
-Tokenizer is local (shared DeepSeek Coder vocab); logits come from top logprobs.
+Tokenizer is loaded locally (must match the served model). Next-token logits
+come from vLLM prompt_logprobs (top 20).
 """
 
 from __future__ import annotations
@@ -45,8 +46,7 @@ class RemoteVLLMEngine:
         self.client = VLLMClient(base_url=base_url, model=model, timeout=timeout)
         self.device = torch.device("cpu")
         self.model = None  # marks remote backend for callers
-        vocab = len(self.tokenizer)
-        self.vocab_size = max(vocab, 32256)
+        self.vocab_size = len(self.tokenizer)
         self.max_logprobs = VLLM_MAX_LOGPROBS
         self.is_remote = True
 
@@ -198,6 +198,8 @@ class RemoteVLLMEngine:
         apply_after = bool(getattr(watermark, "apply_after_temperature", False))
         if hasattr(watermark, "reset"):
             watermark.reset()
+        if getattr(watermark, "eos_token_id", None) is None:
+            watermark.eos_token_id = self.tokenizer.eos_token_id
 
         token_ids = list(prompt_ids)
         new_token_ids: list[int] = []

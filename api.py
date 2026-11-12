@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
 import warnings
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ import torch
 
 from engine.acrosplit import AcroSplitWatermark, decode_resync, majority_decode
 from engine.llm_engine import LLMEngine
+from engine.remote_engine import RemoteVLLMEngine
+from engine.vllm_client import DEFAULT_VLLM_MODEL, DEFAULT_VLLM_URL, VLLM_MAX_LOGPROBS
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a Python code generator. "
@@ -190,6 +193,10 @@ class AcroSplitAPI:
         model_path: str = DEFAULT_MODEL,
         whitelist_path: str = "whitelists/python/white_list.json",
         *,
+        backend: str = "local",
+        vllm_url: str | None = None,
+        vllm_model: str | None = None,
+        tokenizer_name: str | None = None,
         trust_remote_code: bool = True,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         secret_key: str = "acrosplit-key",
@@ -202,6 +209,9 @@ class AcroSplitAPI:
         seed: int | None = None,
         bit_index: str = "sequential",
     ):
+        if backend not in ("local", "vllm"):
+            raise ValueError("backend must be 'local' or 'vllm'")
+        self.backend = backend
         self.model_path = model_path
         self.whitelist_path = whitelist_path
         self.system_prompt = system_prompt
@@ -215,11 +225,43 @@ class AcroSplitAPI:
         self.seed = seed
         self.bit_index = bit_index
 
-        self.engine = LLMEngine(
-            model_path=model_path,
-            trust_remote_code=trust_remote_code,
-        )
+        if backend == "vllm":
+            served = vllm_model or os.getenv("VLLM_MODEL") or DEFAULT_VLLM_MODEL
+            tok = tokenizer_name or model_path or served
+            url = vllm_url or os.getenv("VLLM_BASE_URL") or DEFAULT_VLLM_URL
+            self.engine = RemoteVLLMEngine(
+                tokenizer_path=tok,
+                base_url=url,
+                model=served,
+                trust_remote_code=trust_remote_code,
+            )
+            if self.top_k > VLLM_MAX_LOGPROBS:
+                self.top_k = VLLM_MAX_LOGPROBS
+        else:
+            self.engine = LLMEngine(
+                model_path=model_path,
+                trust_remote_code=trust_remote_code,
+            )
         self._steg = self._make_steg()
+
+    @classmethod
+    def from_vllm(
+        cls,
+        model: str,
+        *,
+        url: str | None = None,
+        tokenizer: str | None = None,
+        **kwargs,
+    ) -> "AcroSplitAPI":
+        """Hide/reveal through a running OpenAI-compatible vLLM server."""
+        return cls(
+            model_path=tokenizer or model,
+            backend="vllm",
+            vllm_url=url,
+            vllm_model=model,
+            tokenizer_name=tokenizer or model,
+            **kwargs,
+        )
 
     @property
     def device(self) -> str:
@@ -455,12 +497,98 @@ class AcroSplitAPI:
         context_size: int | None = None,
         bit_index: str | None = None,
     ) -> AcroSplitWatermark:
-        return AcroSplitWatermark(
+        steg = AcroSplitWatermark(
             secret_key=self.secret_key if secret_key is None else secret_key,
             context_size=self.context_size if context_size is None else context_size,
             whitelist_path=whitelist_path or self.whitelist_path,
             bit_index=self.bit_index if bit_index is None else bit_index,
+            eos_token_id=getattr(self.engine.tokenizer, "eos_token_id", None),
         )
+        return steg
+
+    def _reveal_tokens_remote(
+        self,
+        steg: AcroSplitWatermark,
+        token_ids: list[int],
+        *,
+        message_length: int,
+        prompt_length: int,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        min_p: float,
+        repetition_penalty: float = 1.0,
+        resync: bool = False,
+    ) -> dict:
+        bit_votes: list[list[int]] = [[] for _ in range(message_length)]
+        raw_bits: list[int] = []
+        green_hits = 0
+        red_hits = 0
+        singleton_green = 0
+        cue_steps = 0
+        start = max(prompt_length, 1)
+        k = min(top_k, VLLM_MAX_LOGPROBS) if top_k > 0 else top_k
+        series = self.engine.prompt_logits_series(token_ids)
+
+        for t in range(start, len(token_ids)):
+            history = token_ids[:t]
+            tok = token_ids[t]
+            if t < len(series) and series[t] is not None:
+                next_logits = series[t]
+            else:
+                next_logits = self.engine.next_logits(history)
+            filtered = steg.filter_logits(
+                next_logits,
+                temperature=temperature,
+                top_k=k,
+                top_p=top_p,
+                min_p=min_p,
+                repetition_penalty=repetition_penalty,
+                generated_ids=history,
+            )
+            if steg.eos_in_candidates(filtered):
+                continue
+            if not steg.is_splittable_cue(filtered, history):
+                continue
+            green, red, _, _, singleton = steg.partition_from_logits(
+                filtered, history
+            )
+            if not green or not red:
+                continue
+            if singleton:
+                singleton_green += 1
+            bit_pos = steg.message_slot(history, cue_steps, message_length)
+            cue_steps += 1
+            if tok in green:
+                observed = 1
+                green_hits += 1
+            elif tok in red:
+                observed = 0
+                red_hits += 1
+            else:
+                observed = -1
+            if observed in (0, 1):
+                bit_votes[bit_pos].append(observed)
+                raw_bits.append(observed)
+
+        if resync:
+            recovered, resync_meta = decode_resync(raw_bits, message_length)
+        else:
+            recovered = majority_decode(bit_votes)
+            resync_meta = {"mode": "off"}
+
+        return {
+            "message": recovered,
+            "message_bits": _bits_to_str(recovered),
+            "raw_bits": raw_bits,
+            "cue_steps": cue_steps,
+            "votes_per_bit": [len(v) for v in bit_votes],
+            "green_hits": green_hits,
+            "red_hits": red_hits,
+            "singleton_green_steps": singleton_green,
+            "bit_votes": bit_votes,
+            "resync": resync_meta,
+        }
 
     @torch.inference_mode()
     def _reveal_tokens(
@@ -498,6 +626,20 @@ class AcroSplitAPI:
                 "resync": {"mode": "empty"},
             }
 
+        if getattr(self.engine, "is_remote", False):
+            return self._reveal_tokens_remote(
+                steg,
+                token_ids,
+                message_length=message_length,
+                prompt_length=prompt_length,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
+                repetition_penalty=repetition_penalty,
+                resync=resync,
+            )
+
         device = self.engine.device
         start = max(prompt_length, 1)
         ids = torch.tensor([token_ids[:start]], dtype=torch.long, device=device)
@@ -518,7 +660,9 @@ class AcroSplitAPI:
                 repetition_penalty=repetition_penalty,
                 generated_ids=history,
             )
-            if steg.is_splittable_cue(filtered, history):
+            if not steg.eos_in_candidates(filtered) and steg.is_splittable_cue(
+                filtered, history
+            ):
                 green, red, _, _, singleton = steg.partition_from_logits(
                     filtered, history
                 )

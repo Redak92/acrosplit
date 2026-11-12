@@ -13,19 +13,29 @@ from typing import Any
 import requests
 import torch
 
-
-DEFAULT_VLLM_URL = os.getenv("FOYER_URL", "https://foyer-test.sedan.pro")
-DEFAULT_VLLM_MODEL = os.getenv(
-    "FOYER_MODEL", "deepseek-ai/deepseek-coder-6.7b-instruct"
+# vLLM OpenAI server default. Override with VLLM_BASE_URL.
+DEFAULT_VLLM_URL = os.getenv("VLLM_BASE_URL") or os.getenv(
+    "FOYER_BASE_URL", "http://127.0.0.1:8000"
 )
-# vLLM on this host rejects logprobs > 20.
+DEFAULT_VLLM_MODEL = os.getenv("VLLM_MODEL") or os.getenv(
+    "FOYER_MODEL", "Qwen/Qwen3-8B"
+)
 VLLM_MAX_LOGPROBS = 20
 
 
-def _auth() -> tuple[str, str]:
-    username = os.getenv("FOYER_USERNAME", "test")
-    password = os.getenv("FOYER_PASSWORD", "3UYnbH4oafVxeKleLtvfNI3OBlb3_lSj-HgCZnwJIz0")
-    return username, password
+def _normalize_base_url(url: str) -> str:
+    url = url.rstrip("/")
+    if url.endswith("/v1"):
+        url = url[: -len("/v1")]
+    return url
+
+
+def _optional_auth() -> tuple[str, str] | None:
+    user = os.getenv("VLLM_USER") or os.getenv("FOYER_USER") or os.getenv("FOYER_USERNAME")
+    password = os.getenv("VLLM_PASSWORD") or os.getenv("FOYER_PASSWORD")
+    if user and password:
+        return user, password
+    return None
 
 
 def fix_tokenizer_artifacts(text: str) -> str:
@@ -41,14 +51,17 @@ class VLLMClient:
         timeout: float = 300.0,
         max_logprobs: int = VLLM_MAX_LOGPROBS,
         max_retries: int = 5,
+        auth: tuple[str, str] | None = None,
     ):
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _normalize_base_url(base_url or DEFAULT_VLLM_URL)
         self.model = model
         self.timeout = timeout
         self.max_logprobs = min(max_logprobs, VLLM_MAX_LOGPROBS)
         self.max_retries = max(1, max_retries)
         self.session = requests.Session()
-        self.session.auth = _auth()
+        creds = auth if auth is not None else _optional_auth()
+        if creds:
+            self.session.auth = creds
         self.session.headers.update({"Content-Type": "application/json"})
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +70,6 @@ class VLLMClient:
         for attempt in range(self.max_retries):
             try:
                 r = self.session.post(url, json=payload, timeout=self.timeout)
-                # Foyer occasionally returns 502 under load; retry those.
                 if r.status_code in (502, 503, 504) and attempt + 1 < self.max_retries:
                     time.sleep(min(2**attempt, 16))
                     continue
@@ -71,32 +83,6 @@ class VLLMClient:
         if last_err is not None:
             raise last_err
         raise RuntimeError(f"vLLM POST failed after {self.max_retries} attempts: {url}")
-
-    def chat(
-        self,
-        messages: list[dict[str, str]],
-        *,
-        temperature: float = 0.9,
-        top_p: float = 0.9,
-        top_k: int = 50,
-        max_tokens: int = 1024,
-        stop: list[str] | None = None,
-    ) -> str:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "temperature": temperature,
-            "top_p": top_p,
-            "max_tokens": max_tokens,
-        }
-        if top_k and top_k > 0:
-            payload["top_k"] = top_k
-        if stop:
-            payload["stop"] = stop
-        data = self._post("/v1/chat/completions", payload)
-        content = data["choices"][0]["message"]["content"] or ""
-        return fix_tokenizer_artifacts(content)
 
     def next_logits(
         self,

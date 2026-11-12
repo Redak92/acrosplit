@@ -1,0 +1,61 @@
+\begin{thebibliography}{8}
+\providecommand{\natexlab}[1]{#1}
+
+\bibitem[{Austin et~al.(2021)Austin, Odena, Nye, Bosma, Michalewski, Dohan,
+  Jiang, Cai, Terry, Le, and Sutton}]{austin2021program}
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski,
+  David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles
+  Sutton. 2021.
+\newblock \href {https://arxiv.org/abs/2108.07732} {Program synthesis with
+  large language models}.
+\newblock \emph{arXiv preprint arXiv:2108.07732}.
+
+\bibitem[{Chen et~al.(2021)Chen, Tworek, Jun, Yuan, Pinto, Kaplan, Edwards,
+  Burda, Joseph, Brockman et~al.}]{chen2021evaluating}
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de~Oliveira
+  Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg
+  Brockman, et~al. 2021.
+\newblock \href {https://arxiv.org/abs/2107.03374} {Evaluating large language
+  models trained on code}.
+\newblock \emph{arXiv preprint arXiv:2107.03374}.
+
+\bibitem[{Christ et~al.(2024)Christ, Gunn, and Zamir}]{christ2024undetectable}
+Miranda Christ, Sam Gunn, and Or~Zamir. 2024.
+\newblock Undetectable watermarks for language models.
+\newblock In \emph{Proceedings of Thirty Seventh Conference on Learning
+  Theory}, pages 1125--1139.
+
+\bibitem[{Kirchenbauer et~al.(2023)Kirchenbauer, Geiping, Wen, Katz, Miers, and
+  Goldstein}]{kirchenbauer-etal-2023-watermark}
+John Kirchenbauer, Jonas Geiping, Yuxin Wen, Jonathan Katz, Ian Miers, and Tom
+  Goldstein. 2023.
+\newblock \href {https://proceedings.mlr.press/v202/kirchenbauer23a.html} {A
+  watermark for large language models}.
+\newblock In \emph{Proceedings of the 40th International Conference on Machine
+  Learning}, pages 17061--17084.
+
+\bibitem[{Kuditipudi et~al.(2024)Kuditipudi, Thickstun, Hashimoto, and
+  Liang}]{kuditipudi2024robust}
+Rohith Kuditipudi, John Thickstun, Tatsunori Hashimoto, and Percy Liang. 2024.
+\newblock Robust distortion-free watermarks for language models.
+\newblock \emph{Transactions on Machine Learning Research}.
+
+\bibitem[{Li et~al.(2024)Li, Zhang, Zhang, Sun, Wang, Liu, and
+  Zhang}]{li2024acw}
+Boquan Li, Mengdi Zhang, Peixin Zhang, Jun Sun, Xingmei Wang, Zijian Liu, and
+  Tianzi Zhang. 2024.
+\newblock Resilient watermarking for {AI}-generated codes.
+\newblock \emph{arXiv preprint arXiv:2402.07518}.
+
+\bibitem[{Yang et~al.(2024)Yang, Li, Xiang, and Li}]{yang2024srcmarker}
+Borui Yang, Wei Li, Li~Xiang, and Bo~Li. 2024.
+\newblock \href {https://doi.org/10.1109/SP54263.2024.00097} {{SrcMarker}:
+  Dual-channel source code watermarking via scalable code transformations}.
+\newblock In \emph{2024 IEEE Symposium on Security and Privacy (SP)}. IEEE.
+
+\bibitem[{Zhao et~al.(2023)Zhao, Ananth, Li, and Wang}]{zhao2023provable}
+Xuandong Zhao, Prabhanjan Ananth, Lei Li, and Yu-Xiang Wang. 2023.
+\newblock Provable robust watermarking for {AI}-generated text.
+\newblock \emph{arXiv preprint arXiv:2306.17439}.
+
+\end{thebibliography}
