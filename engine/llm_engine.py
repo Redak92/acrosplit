@@ -20,8 +20,8 @@ def load_tokenizer(model_path: str, trust_remote_code: bool = False):
     """
     Prefer tokenizer.json via PreTrainedTokenizerFast.
 
-    AutoTokenizer often falls back to slow LlamaTokenizer for DeepSeek, which
-    drops whitespace (spaces/newlines become literal Ġ/Ċ artifacts).
+    AutoTokenizer often falls back to a slow Llama tokenizer on some code
+    models (e.g. DeepSeek Coder), which drops whitespace (literal Ġ/Ċ).
     """
     root = Path(model_path)
     tokenizer_json = root / "tokenizer.json"
@@ -181,7 +181,12 @@ class LLMEngine:
             if watermark is not None and apply_after:
                 processed_logits = watermark.apply(processed_logits, generated_ids[0])
 
-            if temperature == 0.0:
+            if watermark is not None and hasattr(watermark, "sample_token"):
+                next_token_id = watermark.sample_token(
+                    processed_logits, generated_ids[0]
+                )
+                probs = torch.softmax(processed_logits, dim=-1)
+            elif temperature == 0.0:
                 probs = torch.zeros_like(processed_logits)
                 probs[0, torch.argmax(processed_logits, dim=-1)] = 1.0
                 next_token_id = sample_greedy(processed_logits)

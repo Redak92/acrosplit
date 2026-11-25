@@ -1,29 +1,53 @@
-\begin{thebibliography}{8}
+\begin{thebibliography}{19}
 \providecommand{\natexlab}[1]{#1}
-
-\bibitem[{Austin et~al.(2021)Austin, Odena, Nye, Bosma, Michalewski, Dohan,
-  Jiang, Cai, Terry, Le, and Sutton}]{austin2021program}
-Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski,
-  David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles
-  Sutton. 2021.
-\newblock \href {https://arxiv.org/abs/2108.07732} {Program synthesis with
-  large language models}.
-\newblock \emph{arXiv preprint arXiv:2108.07732}.
-
-\bibitem[{Chen et~al.(2021)Chen, Tworek, Jun, Yuan, Pinto, Kaplan, Edwards,
-  Burda, Joseph, Brockman et~al.}]{chen2021evaluating}
-Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de~Oliveira
-  Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg
-  Brockman, et~al. 2021.
-\newblock \href {https://arxiv.org/abs/2107.03374} {Evaluating large language
-  models trained on code}.
-\newblock \emph{arXiv preprint arXiv:2107.03374}.
 
 \bibitem[{Christ et~al.(2024)Christ, Gunn, and Zamir}]{christ2024undetectable}
 Miranda Christ, Sam Gunn, and Or~Zamir. 2024.
 \newblock Undetectable watermarks for language models.
 \newblock In \emph{Proceedings of Thirty Seventh Conference on Learning
   Theory}, pages 1125--1139.
+
+\bibitem[{Ding et~al.(2023)Ding, Chen, Wang, Zhao, Zhang, and
+  Yu}]{ding2023discop}
+Jinyang Ding, Kejiang Chen, Yaofei Wang, Na~Zhao, Weiming Zhang, and Nenghai
+  Yu. 2023.
+\newblock \href {https://doi.org/10.1109/SP46215.2023.10179287} {Discop:
+  Provably secure steganography in practice based on ``distribution copies''}.
+\newblock In \emph{2023 IEEE Symposium on Security and Privacy (SP)}. IEEE.
+
+\bibitem[{Feng et~al.(2025)Feng, Zhang, Zhang, Zhang, and Pan}]{feng2025bimark}
+Xiaoyan Feng, He~Zhang, Yanjun Zhang, Leo~Yu Zhang, and Shirui Pan. 2025.
+\newblock \href {https://proceedings.mlr.press/v267/feng25u.html} {{BiMark}:
+  Unbiased multilayer watermarking for large language models}.
+\newblock In \emph{Proceedings of the 42nd International Conference on Machine
+  Learning}, volume 267 of \emph{Proceedings of Machine Learning Research},
+  pages 17049--17067. PMLR.
+
+\bibitem[{Guan et~al.(2024)Guan, Wan, Bi, Wang, Zhang, Zhou, and
+  Sun}]{guan2024codeip}
+Batu Guan, Yao Wan, Zhangqian Bi, Zheng Wang, Hongyu Zhang, Pan Zhou, and
+  Lichao Sun. 2024.
+\newblock \href {https://doi.org/10.18653/v1/2024.findings-emnlp.541}
+  {{CodeIP}: A grammar-guided multi-bit watermark for large language models of
+  code}.
+\newblock In \emph{Findings of the Association for Computational Linguistics:
+  EMNLP 2024}, pages 9243--9258. Association for Computational Linguistics.
+
+\bibitem[{Kaptchuk et~al.(2021)Kaptchuk, Jois, Green, and
+  Rubin}]{kaptchuk2021meteor}
+Gabriel Kaptchuk, Tushar~M. Jois, Matthew Green, and Aviel~D. Rubin. 2021.
+\newblock \href {https://doi.org/10.1145/3460120.3484550} {Meteor:
+  Cryptographically secure steganography for realistic distributions}.
+\newblock In \emph{Proceedings of the 2021 ACM SIGSAC Conference on Computer
+  and Communications Security}, pages 1529--1542. ACM.
+
+\bibitem[{Kim et~al.(2026)Kim, Park, and Han}]{kim2026stone}
+Jungin Kim, Shinwoo Park, and Yo-Sub Han. 2026.
+\newblock \href {https://doi.org/10.18653/v1/2026.findings-eacl.207} {Marking
+  code without breaking it: Code watermarking for detecting {LLM}-generated
+  code}.
+\newblock In \emph{Findings of the Association for Computational Linguistics:
+  EACL 2026}, pages 3990--4002. Association for Computational Linguistics.
 
 \bibitem[{Kirchenbauer et~al.(2023)Kirchenbauer, Geiping, Wen, Katz, Miers, and
   Goldstein}]{kirchenbauer-etal-2023-watermark}
@@ -40,6 +64,16 @@ Rohith Kuditipudi, John Thickstun, Tatsunori Hashimoto, and Percy Liang. 2024.
 \newblock Robust distortion-free watermarks for language models.
 \newblock \emph{Transactions on Machine Learning Research}.
 
+\bibitem[{Lee et~al.(2024)Lee, Hong, Ahn, Hong, Lee, Yun, Shin, and
+  Kim}]{lee2024sweet}
+Taehyun Lee, Seokhee Hong, Jaewoo Ahn, Ilgee Hong, Hwaran Lee, Sangdoo Yun,
+  Jamin Shin, and Gunhee Kim. 2024.
+\newblock \href {https://doi.org/10.18653/v1/2024.acl-long.268} {Who wrote this
+  code? watermarking for code generation}.
+\newblock In \emph{Proceedings of the 62nd Annual Meeting of the Association
+  for Computational Linguistics (Volume 1: Long Papers)}, pages 4890--4911.
+  Association for Computational Linguistics.
+
 \bibitem[{Li et~al.(2024)Li, Zhang, Zhang, Sun, Wang, Liu, and
   Zhang}]{li2024acw}
 Boquan Li, Mengdi Zhang, Peixin Zhang, Jun Sun, Xingmei Wang, Zijian Liu, and
@@ -47,11 +81,62 @@ Boquan Li, Mengdi Zhang, Peixin Zhang, Jun Sun, Xingmei Wang, Zijian Liu, and
 \newblock Resilient watermarking for {AI}-generated codes.
 \newblock \emph{arXiv preprint arXiv:2402.07518}.
 
+\bibitem[{Park et~al.(2026)Park, Lee, Kwak, and Yun}]{park2026weavemark}
+Gang-Hyun Park, Ju-Hyeong Lee, Hee-Youl Kwak, and Dae-Young Yun. 2026.
+\newblock {WeaveMark}: Robust and scalable multi-bit {LLM} watermarking via
+  coded payload spreading.
+\newblock \emph{arXiv preprint arXiv:2609.02177}.
+
+\bibitem[{Qu et~al.(2025)Qu, Zheng, Tao, Yin, Jiang, Tian, Zou, Jia, and
+  Zhang}]{qu2025watermark}
+Wenjie Qu, Wengrui Zheng, Tianyang Tao, Dong Yin, Yanze Jiang, Zhihua Tian, Wei
+  Zou, Jinyuan Jia, and Jiaheng Zhang. 2025.
+\newblock Provably robust multi-bit watermarking for {AI}-generated text.
+\newblock In \emph{34th USENIX Security Symposium}, pages 201--220. USENIX
+  Association.
+
+\bibitem[{Wang et~al.(2024)Wang, Yang, Chen, Zhou, Lin, Meng, Zhou, and
+  Sun}]{wang2024balancemarking}
+Lean Wang, Wenkai Yang, Deli Chen, Hao Zhou, Yankai Lin, Fandong Meng, Jie
+  Zhou, and Xu~Sun. 2024.
+\newblock \href {https://openreview.net/forum?id=J6jOSzTsK6} {Towards codable
+  watermarking for injecting multi-bits information to {LLMs}}.
+\newblock In \emph{The Twelfth International Conference on Learning
+  Representations}.
+
+\bibitem[{Wang et~al.(2026)Wang, Ren, Cao, and Guo}]{wang2026worldcup}
+Yidan Wang, Yubing Ren, Yanan Cao, and Li~Guo. 2026.
+\newblock Worldcup sampling for multi-bit {LLM} watermarking.
+\newblock \emph{arXiv preprint arXiv:2602.01752}.
+
+\bibitem[{Xu et~al.(2026)Xu, Hu, Kotevska, and Zhang}]{xu2026xmark}
+Jiahao Xu, Rui Hu, Olivera Kotevska, and Zikai Zhang. 2026.
+\newblock \href {https://doi.org/10.18653/v1/2026.acl-long.672} {{XMark}:
+  Reliable multi-bit watermarking for {LLM}-generated texts}.
+\newblock In \emph{Proceedings of the 64th Annual Meeting of the Association
+  for Computational Linguistics (Volume 1: Long Papers)}, pages 14747--14763.
+  Association for Computational Linguistics.
+
+\bibitem[{Xu et~al.(2025)Xu, Hu, Zhang, and Kotevska}]{xu2025majormark}
+Jiahao Xu, Rui Hu, Zikai Zhang, and Olivera Kotevska. 2025.
+\newblock Majority bit-aware watermarking for large language models.
+\newblock \emph{arXiv preprint arXiv:2508.03829}.
+\newblock MajorMark; also listed as NeurIPS 2026.
+
 \bibitem[{Yang et~al.(2024)Yang, Li, Xiang, and Li}]{yang2024srcmarker}
 Borui Yang, Wei Li, Li~Xiang, and Bo~Li. 2024.
 \newblock \href {https://doi.org/10.1109/SP54263.2024.00097} {{SrcMarker}:
   Dual-channel source code watermarking via scalable code transformations}.
 \newblock In \emph{2024 IEEE Symposium on Security and Privacy (SP)}. IEEE.
+
+\bibitem[{Yoo et~al.(2024)Yoo, Ahn, and Kwak}]{yoo2024mpac}
+KiYoon Yoo, Wonhyuk Ahn, and Nojun Kwak. 2024.
+\newblock \href {https://doi.org/10.18653/v1/2024.naacl-long.224} {Advancing
+  beyond identification: Multi-bit watermark for large language models}.
+\newblock In \emph{Proceedings of the 2024 Conference of the North {A}merican
+  Chapter of the Association for Computational Linguistics: Human Language
+  Technologies (Volume 1: Long Papers)}, pages 4031--4055. Association for
+  Computational Linguistics.
 
 \bibitem[{Zhao et~al.(2023)Zhao, Ananth, Li, and Wang}]{zhao2023provable}
 Xuandong Zhao, Prabhanjan Ananth, Lei Li, and Yu-Xiang Wang. 2023.

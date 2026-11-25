@@ -88,6 +88,70 @@ def balanced_red_green(
     return green, red, False
 
 
+def hamming74_encode(data: Sequence[int]) -> list[int]:
+    """4 data bits → 7-bit Hamming codeword (parity at 1-indexed positions 1,2,4)."""
+    if len(data) != 4:
+        raise ValueError("Hamming (7,4) expects 4 data bits")
+    d0, d1, d2, d3 = (int(b) & 1 for b in data)
+    p1 = d0 ^ d1 ^ d3
+    p2 = d0 ^ d2 ^ d3
+    p4 = d1 ^ d2 ^ d3
+    return [p1, p2, d0, p4, d1, d2, d3]
+
+
+def hamming74_decode(code: Sequence[int]) -> list[int]:
+    """Correct at most one bit error, then return the 4 data bits."""
+    c = [(int(b) & 1) for b in list(code)[:7]]
+    c.extend([0] * (7 - len(c)))
+    p1, p2, d0, p4, d1, d2, d3 = c
+    syn = (p1 ^ d0 ^ d1 ^ d3) + 2 * (p2 ^ d0 ^ d2 ^ d3) + 4 * (p4 ^ d1 ^ d2 ^ d3)
+    if syn:
+        idx = syn - 1
+        if 0 <= idx < 7:
+            c[idx] ^= 1
+            p1, p2, d0, p4, d1, d2, d3 = c
+    return [d0, d1, d2, d3]
+
+
+def encode_channel(payload: Sequence[int], coding: str) -> list[int]:
+    bits = [int(b) & 1 for b in payload]
+    if coding in (None, "", "none", "repeat"):
+        return bits
+    if coding != "hamming74":
+        raise ValueError(f"unknown coding {coding!r}")
+    padded = list(bits)
+    while len(padded) % 4:
+        padded.append(0)
+    out: list[int] = []
+    for i in range(0, len(padded), 4):
+        out.extend(hamming74_encode(padded[i : i + 4]))
+    return out
+
+
+def decode_channel(channel: Sequence[int], payload_length: int, coding: str) -> list[int]:
+    bits = [int(b) & 1 for b in channel]
+    if coding in (None, "", "none", "repeat"):
+        return bits[:payload_length]
+    if coding != "hamming74":
+        raise ValueError(f"unknown coding {coding!r}")
+    out: list[int] = []
+    for i in range(0, max(len(bits), 7), 7):
+        block = bits[i : i + 7]
+        if len(block) < 7:
+            block = block + [0] * (7 - len(block))
+        out.extend(hamming74_decode(block))
+    return out[:payload_length]
+
+
+def recover_payload(
+    bit_votes: list[list[int]],
+    payload_length: int,
+    coding: str,
+) -> list[int]:
+    channel = majority_decode(bit_votes)
+    return decode_channel(channel, payload_length, coding)
+
+
 def majority_decode(bit_votes: list[list[int]]) -> list[int]:
     recovered: list[int] = []
     for votes in bit_votes:
@@ -192,15 +256,22 @@ class AcroSplitWatermark:
         whitelist_path: str | None = None,
         bit_index: str = "sequential",
         eos_token_id: int | Sequence[int] | None = None,
+        coding: str = "hamming74",
+        min_list_mass: float = 0.0,
         **_kwargs,
     ):
         if bit_index not in ("sequential", "context"):
             raise ValueError("bit_index must be 'sequential' or 'context'")
+        if coding not in ("none", "repeat", "hamming74"):
+            raise ValueError("coding must be 'none', 'repeat', or 'hamming74'")
         self.secret_key = secret_key
         self.context_size = context_size
         self.whitelist_path = whitelist_path
         self.bit_index = bit_index
         self.eos_token_id = eos_token_id
+        self.coding = coding
+        self.min_list_mass = float(min_list_mass)
+        self.payload: list[int] = []
         self.message: list[int] = []
         self._cue_count = 0
         self.cue_masses: list[float] = []
@@ -208,7 +279,14 @@ class AcroSplitWatermark:
         self._w_sum_var = 0.0
 
     def set_message(self, message: str | Sequence[int]) -> None:
-        self.message = _as_bits(message)
+        self.payload = _as_bits(message)
+        self.message = encode_channel(self.payload, self.coding)
+
+    def channel_length(self) -> int:
+        return len(self.message)
+
+    def payload_length(self) -> int:
+        return len(self.payload)
 
     def reset(self) -> None:
         self._cue_count = 0
@@ -286,6 +364,37 @@ class AcroSplitWatermark:
         """True when ≥2 candidates remain after top-k/p."""
         return self.candidate_count(logits) >= 2
 
+    def list_masses(
+        self,
+        token_ids: list[int],
+        probs: list[float],
+        green: set[int],
+        red: set[int],
+    ) -> tuple[float, float]:
+        mass_map = dict(zip(token_ids, probs))
+        g = sum(float(mass_map.get(t, 0.0)) for t in green)
+        r = sum(float(mass_map.get(t, 0.0)) for t in red)
+        return g, r
+
+    def should_embed(
+        self,
+        logits: torch.Tensor,
+        history: Sequence[int] | torch.Tensor,
+    ) -> bool:
+        if not self.message:
+            return False
+        if self.eos_in_candidates(logits):
+            return False
+        if not self.is_splittable_cue(logits, history):
+            return False
+        green, red, token_ids, probs, _ = self.partition_from_logits(logits, history)
+        if not green or not red:
+            return False
+        g, r = self.list_masses(token_ids, probs, green, red)
+        if self.min_list_mass > 0.0 and min(g, r) < self.min_list_mass:
+            return False
+        return True
+
     def partition_from_logits(
         self,
         logits: torch.Tensor,
@@ -322,16 +431,12 @@ class AcroSplitWatermark:
             return logits
 
         history = self._normalize_history(tokens_so_far)
-        if self.eos_in_candidates(logits):
-            return logits
-        if not self.is_splittable_cue(logits, history):
+        if not self.should_embed(logits, history):
             return logits
 
         green, red, token_ids, probs, _ = self.partition_from_logits(
             logits, history
         )
-        if not green or not red:
-            return logits
 
         slot = self.message_slot(history, self._cue_count, len(self.message))
         bit = self.message[slot]

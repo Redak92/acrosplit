@@ -52,27 +52,72 @@
 \begin{document}
 \maketitle
 \begin{abstract}
-
-% - to do List: 
-
-% - pseudo code of the algorithm done       
-% - diagram or flow of pipeline done
-% - add models (minimum 5) for each dataset, add 2 data sets done ~
-% - we need to explain the difference btw claude and us done
-% - accuracy + token density + pass @ 1 ? ( executed from the first time + pass exam ) done ~
-% - change the code in 1\%, 3\% or 5\% and 20\% --> check if the water marking still works or not. --- > robustness test
-% - what is the effect on efficiency (tokens/second) : take 2 codes: calculate the token second with and without watermarking done 
-
-% => base 2,370 t/s watermarking 2.381 t/s  almost the same 
-
-We describe AcroSplit, a multi-bit watermark for language-model code generation.
-After ordinary sampling filters, every step with at least two surviving candidates is split into green and red lists of similar probability mass; the next message bit selects which list to sample from.
-A generation-time $W$-score measures how strongly those splits constrain the sample.
-On Qwen3.8-27B, a short list-conversion function carries 20 embedding steps at 0.22 bits per token in executable code, with no comment padding.
-Average density is $0.16$--$0.18$ bits/token, about three times ACW and SrcMarker, with $100\%$ bit accuracy.
-Relative to classic (unwatermarked) sampling, pass@1 drops $2.1\%$ on InstructHumanEval and $2.8\%$ on MBPP.
-On a vLLM serving stack the same protocol holds for smaller code models: Qwen3-8B loses $2.2\%$ relative pass@1 on HumanEval, and DeepSeek-Coder-6.7B-Instruct loses $3.1\%$.
+We describe AcroSplit, a generation-time scheme that hides a short bitstring in language-model code.
+After temperature, top-$k$ and nucleus sampling, every step whose filtered support has size at least two \emph{and} does not contain the end-of-sequence token is partitioned into two lists by a fill-the-lighter-mass rule; the next message bit keeps one list and drops the other.
+The split is greedy, not a guaranteed 50/50 cut: peaked code nuclei remain unbalanced.
+A Kirchenbauer-style $W$-score tracks chosen-list mass.
+On \texttt{Inferact/Qwen3.8-27B-NVFP4} with a top-$20$ log-probability shortlist, a short list-conversion function carries $20$ cues at $0.22$ bits per token.
+Mean density is $0.16$--$0.18$ bits/token, about three times the static capacity of ACW and SrcMarker on the same snippet sets.
+Cue-level BitAcc is $100\%$ when reveal is given the exact generated token ids, the same model, filters and key.
+Relative to classic sampling, pass@1 drops $2.1\%$ on InstructHumanEval and $2.8\%$ on MBPP; Qwen3-8B and DeepSeek-Coder-6.7B-Instruct show similar relative drops on HumanEval.
 \end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Language-model watermarks split into two jobs that are easy to confuse.
+The original green/red method of \citet{kirchenbauer-etal-2023-watermark} answers a yes/no question: was this passage sampled under a keyed bias?
+It does not hide a recoverable message.
+A second job is to embed several bits (model id, user id, a short nonce) while the model still generates.
+That job is closer to steganography than to robust copyright marking: the receiver typically needs the same sampler.
+
+AcroSplit is a code-oriented instance of the second job.
+At each decoding step it works only on the tokens the sampler is already allowed to emit.
+It never restores mass that temperature, top-$k$ or nucleus sampling have already removed.
+When the shortlist is large enough and does not contain EOS, a keyed greedy rule fills two lists by probability mass; the current message bit samples from one list and blocks the other.
+Reveal teacher-forces the same prefixes and majority-votes the recovered bits.
+
+The closest prior method is Balance-Marking \citep{wang2024balancemarking}: the message bit also chooses between two roughly equal-mass vocabulary parts.
+AcroSplit differs in four places that we treat as the claim, not as a new theory of watermarking.
+(1)~It partitions only the filtered shortlist, not the full vocabulary and not a proxy-LM split of that vocabulary.
+(2)~It hard-masks the unchosen list instead of adding a logit bias.
+(3)~It uses the fill-lighter greedy assignment rather than a proxy model.
+(4)~It is measured on executable code, including short comment-free functions where post-hoc AST rewrites have little room.
+
+Those differences also define the threat model we do \emph{not} cover.
+Reveal needs the generator, the filters, the key and the exact token sequence.
+A rename, a reformat or a BPE retokenization of the printed source can desynchronize the cue index.
+We therefore report the method as a cheap generation-time payload channel with a small pass@1 cost, not as an edit-robust detector of unmarked human code.
+
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Green/red detection.}
+\citet{kirchenbauer-etal-2023-watermark} hash the prefix and partition the \emph{entire} vocabulary into green and red.
+Sampling is biased toward green; a $z$-test on green hits detects the mark.
+Later work makes the bias unbiased or distortion-free \citep{zhao2023provable,kuditipudi2024robust} or argues cryptographic undetectability \citep{christ2024undetectable}.
+The design is strong for long prose and a poor default for code: most of a random green list is never in the nucleus, the usual objective is binary detection, and a heavy bias can fail unit tests.
+
+\paragraph{Multi-bit generation-time marks.}
+Balance-Marking \citep{wang2024balancemarking} is the closest method: a proxy LM splits the vocabulary into two parts of comparable probability, and the message bit favours one part.
+MPAC \citep{yoo2024mpac} assigns each token a payload position and colours the vocabulary per bit.
+\citet{qu2025watermark} embed longer strings with segment assignment, majority-style aggregation and error-correcting codes.
+Several later schemes also spread a payload over many tokens and recover it by voting or coding: BiMark uses unbiased multilayer reweighting \citep{feng2025bimark}; Majority bit-aware encoding (MajorMark) builds a large green list from shards that match the message's majority bit \citep{xu2025majormark}; XMark intersects leave-one-shard-out lists across vocabulary permutations \citep{xu2026xmark}; WorldCup Sampling embeds bits in a hierarchical sampling contest \citep{wang2026worldcup}; WeaveMark spreads an ECC-coded payload across tokens and layers \citep{park2026weavemark}.
+Those methods still partition (or reweight) the \emph{full} vocabulary and aim for model-free extraction after edits.
+AcroSplit also repeats a short payload and majority-votes, but it never splits tokens that the sampler has already dropped, and it fully blocks the unchosen side of $C$.
+On an unedited replay the votes agree, so the repetition is unused capacity unless the text is attacked---a setting we do not test.
+
+\paragraph{Code.}
+SWEET \citep{lee2024sweet} applies a Kirchenbauer bias only at high-entropy steps; skipping $|C|{<}2$ (and EOS) is a coarser version of the same idea.
+CodeIP \citep{guan2024codeip} hides a multi-bit provenance string in generated code and uses a grammar-type predictor to keep the sample syntactically valid; it is the direct generation-time competitor on code, and we do not yet report a head-to-head (Section~\ref{sec:limitations}).
+STONE \citep{kim2026stone} avoids watermarking syntax-critical tokens so the program still runs.
+ACW \citep{li2024acw} and SrcMarker \citep{yang2024srcmarker} rewrite a finished program with semantics-preserving transforms.
+They do not need the generator, so they apply to human code, but the channel is sparse and recovery is imperfect.
+
+\paragraph{Steganography.}
+Meteor \citep{kaptchuk2021meteor} and Discop \citep{ding2023discop} hide bits in model text so that the cover stays indistinguishable from ordinary sampling, often at more than one bit per high-entropy step.
+AcroSplit is operationally closer to that literature than to a public watermark: extraction uses the same model.
+It is \emph{not} distribution-preserving, so it is a weaker stegosystem than Meteor or Discop and a weaker robust watermark than SWEET or CodeIP under edits.
 
 \section{How AcroSplit works}
 \label{sec:method}
@@ -103,7 +148,7 @@ Algorithms~\ref{alg:split}--\ref{alg:reveal} state the same steps in full.
 ]
   \node[font=\small\bfseries, anchor=west, text=wmlbl] at (-1.55,1.55) {Generation};
   \node[start] (gen) at (0.15,0) {Generate the next-token candidates};
-  \node[decide] (gate) at (3.55,0) {At least two candidates?};
+  \node[decide] (gate) at (3.55,0) {At least two candidates and no EOS?};
   \node[skip] (plain) at (7.05,1.45) {Sample a token as usual and append it. No bit is written.};
   \node[cue] (split) at (7.05,-1.35) {Split into $L_0$ and $L_1$: each token joins the lighter list};
   \node[cue] (bit) at (10.05,-1.35) {Message bit $b$ keeps list $L_b$};
@@ -118,7 +163,7 @@ Algorithms~\ref{alg:split}--\ref{alg:reveal} state the same steps in full.
 
   \node[font=\small\bfseries, anchor=west, text=revedge] at (-1.55,-3.55) {Reveal};
   \node[start] (regen) at (0.15,-4.85) {Regenerate the candidates from the same prefix};
-  \node[decide] (rgate) at (3.55,-4.85) {At least two candidates?};
+  \node[decide] (rgate) at (3.55,-4.85) {At least two candidates and no EOS?};
   \node[skip] (rplain) at (7.05,-3.45) {This token carries no bit.};
   \node[rev] (rsplit) at (7.05,-6.2) {Rebuild the same lists $L_0$ and $L_1$};
   \node[rev] (rbit) at (10.05,-6.2) {The list that contains the token is the bit};
@@ -132,7 +177,7 @@ Algorithms~\ref{alg:split}--\ref{alg:reveal} state the same steps in full.
   \node[note] at (6.4,-7.4) {Each message bit is the majority of its votes. A tie yields 0.};
 \end{tikzpicture}
 \caption{One generation step and the matching reveal step.
-Gray: the step has fewer than two candidates, so no bit is written or read.
+Gray: fewer than two candidates, or EOS in the shortlist, so no bit is written or read.
 Blue: generation writes the current message bit by sampling inside one list.
 Green: reveal reads that bit back from the list which contains the observed token.
 $L_0$ is the list for bit 0. $L_1$ is the list for bit 1.}
@@ -147,9 +192,11 @@ Then, at every step:
 
 \begin{enumerate}
 \item \textbf{Filter.} Apply the decoding filters. Keep the surviving candidates in a set $C$. Later draws stay inside $C$.
-\item \textbf{Skip.} If $C$ has fewer than two tokens, sample from $C$ in the usual way. This step writes no bit.
-\item \textbf{Split.} If $C$ has two or more tokens, split it into two lists, $L_0$ and $L_1$. The rule is Section~\ref{sec:split}.
-\item \textbf{Select.} Let $b$ be the current message bit. Keep list $L_b$. Drop the other list.
+On the OpenAI-compatible vLLM backends used in Section~\ref{sec:results}, the server returns only the top-$20$ log-probabilities; $C$ is that shortlist, renormalized, so effective top-$k$ is at most $20$.
+\item \textbf{Skip.} If $|C|<2$, or if the end-of-sequence token is in $C$, sample from $C$ in the usual way. This step writes no bit.
+The EOS skip is required for hide and reveal to stay aligned when the model is about to stop; it is part of the method, not an implementation detail.
+\item \textbf{Split.} If the step is not skipped, split $C$ into two lists, $L_0$ and $L_1$. The rule is Section~\ref{sec:split}.
+\item \textbf{Select.} Let $b$ be the current message bit. Keep list $L_b$. Drop the other list (hard mask, not a logit nudge).
 \item \textbf{Sample.} Draw the next token from $L_b$. Inside that list, probabilities stay proportional to the filtered ones.
 \item \textbf{Advance.} Append the token. The next cue carries the next message bit.
 \end{enumerate}
@@ -167,18 +214,29 @@ $L_0$ is the list for bit~$0$. $L_1$ is the list for bit~$1$.
 \item If the two masses are equal, hash the key together with $\mathrm{context}(x)$, and use that bit to choose the list. The first token is always a tie.
 \end{enumerate}
 
+This fill-lighter pass has no balancing guarantee.
+If the leading token has mass $0.85$, which is common in code, the two lists are $0.85$ versus $0.15$.
+Choosing the light list then forces a low-probability token.
+That bias is the most plausible source of the pass@1 drop in Section~\ref{sec:pass}.
+We still use the greedy rule because it is cheap and never reintroduces filtered-out tokens; we do not claim that the two lists have similar mass at every step.
+
 \subsection{Reveal}
 \label{sec:reveal}
 
 Walk the generated tokens, starting again from the prompt.
 
 \begin{enumerate}
-\item Recompute $C$ with the same filters on the same prefix.
-\item If $C$ has at least two tokens, recompute the same split, and advance the cue index.
+\item Recompute $C$ with the same filters on the same prefix (same top-$20$ truncation when the backend is vLLM).
+\item If $|C|\ge 2$ and EOS is not in $C$, recompute the same split, and advance the cue index.
 \item The list that contains the observed token is the bit recorded for this cue.
 \item For each message index, count the votes for $0$ and the votes for $1$.
 \item Write $1$ when the votes for $1$ are strictly more numerous. Write $0$ in every other case, including a tie.
 \end{enumerate}
+
+Cue-level BitAcc is $100\%$ when this walk is given the \emph{exact} token ids that generation produced.
+Decoding the string with the tokenizer and re-encoding it (BPE retokenization) can shift or drop cues; a separate resynchronization routine exists in the implementation and is not used in the tables.
+On an unedited replay, every vote for a bit agrees, so cycling the $4$-bit payload only spends capacity.
+The repetition would matter under edits, which we do not test.
 
 \alghead{alg:split}{Split$(C, \mathrm{key}, x)$}
 \noindent
@@ -197,7 +255,7 @@ $h \leftarrow \mathrm{Hash}(\mathrm{key}, \mathrm{context}(x)) \bmod 2$\\
 $x \leftarrow$ prompt,\quad $i \leftarrow 0$\\
 \textbf{while} not done \textbf{do}\\
 \hspace*{1em}$C \leftarrow \mathrm{Filter}\bigl(p(\cdot \mid x)\bigr)$\\
-\hspace*{1em}\textbf{if} $|C| < 2$ \textbf{then}\\
+\hspace*{1em}\textbf{if} $|C| < 2$ \textbf{or} $\mathrm{EOS}\in C$ \textbf{then}\\
 \hspace*{2em}$t \leftarrow \mathrm{Sample}(C)$\\
 \hspace*{1em}\textbf{else}\\
 \hspace*{2em}$(L_0, L_1) \leftarrow \mathrm{Split}(C, \mathrm{key}, x)$\\
@@ -214,7 +272,7 @@ $\mathrm{votes}_0[0..L{-}1] \leftarrow 0$,\quad $\mathrm{votes}_1[0..L{-}1] \lef
 $x \leftarrow$ prompt,\quad $i \leftarrow 0$\\
 \textbf{for} each generated token $t$ \textbf{do}\\
 \hspace*{1em}$C \leftarrow \mathrm{Filter}\bigl(p(\cdot \mid x)\bigr)$\\
-\hspace*{1em}\textbf{if} $|C| \ge 2$ \textbf{then}\\
+\hspace*{1em}\textbf{if} $|C| \ge 2$ \textbf{and} $\mathrm{EOS}\notin C$ \textbf{then}\\
 \hspace*{2em}$(L_0, L_1) \leftarrow \mathrm{Split}(C, \mathrm{key}, x)$\\
 \hspace*{2em}$j \leftarrow i \bmod L$\\
 \hspace*{2em}\textbf{if} $t \in L_0$ \textbf{then} $\mathrm{votes}_0[j] \leftarrow \mathrm{votes}_0[j] + 1$\\
@@ -226,46 +284,18 @@ $x \leftarrow$ prompt,\quad $i \leftarrow 0$\\
 \textbf{return} $\hat{m}$
 \end{minipage}
 
-\section{Related work}
-\label{sec:related}
-
-Work on marking machine-generated text has two largely separate lineages: \emph{logit-level} watermarks that intervene while the model samples, and \emph{post-hoc} watermarks that rewrite a finished artifact.
-AcroSplit belongs to the first lineage, but it is built for code, where a usable watermark has to carry a multi-bit payload inside short, executable programs rather than a single detect/not-detect bit in long prose.
-
-The canonical logit-level scheme of \citet{kirchenbauer-etal-2023-watermark} hashes the preceding tokens and partitions the \emph{entire} vocabulary into green and red lists.
-Sampling is biased toward green; a $z$-test on green hits then detects the watermark.
-That design is strong for long natural-language passages, and later variants make the bias unbiased or distortion-free \citep{zhao2023provable,kuditipudi2024robust} or argue cryptographic undetectability \citep{christ2024undetectable}.
-It is a poor fit for code generation on three counts.
-First, a random split of the full vocabulary ignores the tiny nucleus that nucleus sampling actually uses, so most of the green list is never a legal next token.
-Second, the usual objective is binary detection, not a recoverable message of a few bits.
-Third, a heavy green bias can change identifiers and control flow enough to fail unit tests.
-AcroSplit keeps the red/green vocabulary of that literature, but it splits only the filtered candidate set $C$, balances the two lists by probability mass rather than by a hash of token ids, and spends each cue on the next bit of a repeating payload.
-The mass balance is why either bit remains a high-probability continuation, which is the quantity that pass@1 measures.
-
-A second line of work watermarks \emph{source code after it has been written}.
-ACW \citep{li2024acw} and SrcMarker \citep{yang2024srcmarker} encode bits by applying semantics-preserving transforms and identifier rewrites to a finished program.
-Those methods do not need the generator, so they apply to human code as well as to model output.
-The channel, however, is sparse: on HumanEval and MBPP snippets the static capacity is about one bit every 16--18 tokens (Section~\ref{sec:density}), and recovery is imperfect ($97.2\%$ and $97.3\%$ BitAcc) because a transform that already matches the original is scored as an error.
-AcroSplit cannot mark a program that was not sampled under the key, but it does not wait for a finished AST either.
-Every splittable decoding step is a cue, density is about three times higher on Qwen3.8-27B, and reveal replays the same keyed split, so cue-level BitAcc is $100\%$ whenever the split ran.
-
-The evaluation of code generators themselves \citep{chen2021evaluating,austin2021program} is the right testbed for this distinction.
-A watermark that survives only as comments, or that drops pass@1 by a large relative margin, is not a watermark on \emph{code generation}.
-Section~\ref{sec:results} therefore reports functional pass@1 against matched classic sampling, not only retrieval.
-
 \section{Watermarking score}
 \label{sec:wscore}
 
-The lists hold only candidates that survived filtering, and the split keeps their masses close.
+The lists hold only candidates that survived filtering.
 A random green/red hash partitions the full vocabulary, with no mass balance.
-The two lists are rarely perfectly balanced.
+Fill-lighter keeps masses closer than a random cut of $C$, but the two lists are often far from $1/2$.
 Write $m_t$ for the total filtered probability of the list selected at cue $t$, measured \emph{before} masking.
 A bit that picks the heavy side yields $m_t \gg 0.5$; a bit that picks the light side yields a small $m_t$.
-Unwatermarked text tends to occupy the heavier list (occupied mass around $0.6$--$0.63$ in our checks).
-A watermarked sample, because the bit chooses independently of mass, sits closer to one half on average.
 
-Hide always forces a hit on the chosen list, so a raw green-hit count is not informative at generation time.
-We instead accumulate a soft $z$-score from the chosen masses alone:
+Hide always forces a hit on the chosen list, so a raw green-hit count is not a detector: $W$ is positive for every watermarked sample by construction.
+Unwatermarked text is not forced onto $L_b$, but we do not report a paired $W$ table on human or classic-sampled code, so $W$ must not be read as a false-positive test.
+We accumulate a soft $z$-score from the chosen masses alone (Kirchenbauer-style, with success probability $m_t$ instead of a global green fraction):
 \begin{equation}
   W \;=\;
   \frac{\sum_t (1 - m_t)}
@@ -281,16 +311,19 @@ It is a generation-time strength signal, not a stand-alone keyless detector.
 \label{sec:results}
 
 The following measurements share the same protocol: matched classic sampling versus AcroSplit, same prompts, same filters.
-We report an example, token density and BitAcc against post-hoc code watermarks, generation throughput, then pass@1 on Qwen3.8-27B and on additional models served with vLLM.
+The 27B numbers use \texttt{Inferact/Qwen3.8-27B-NVFP4} behind an OpenAI-compatible completions API that returns the top-$20$ log-probabilities; AcroSplit splits that shortlist on the client.
+\texttt{Qwen/Qwen3-8B} and \texttt{deepseek-ai/deepseek-coder-6.7b-instruct} use the same top-$20$ protocol on vLLM.
+We report an example, token density and BitAcc against post-hoc code watermarks, generation throughput, then pass@1.
 
 \subsection{Hiding bits in short programs}
 \label{sec:example}
 
-Because every splittable nucleus step carries a bit, short functions can still host many cues even when the model writes ordinary executable statements rather than comments.
-Figure~\ref{fig:sidebyside} shows MBPP task~117, \texttt{list\_to\_float}: recursively (classic) or by a list comprehension (AcroSplit), convert nested string fields to floats.
+Because every non-skipped nucleus step carries a bit, short functions can still host many cues even when the model writes ordinary executable statements rather than comments.
+Figure~\ref{fig:sidebyside} shows MBPP task~117, \texttt{list\_to\_float}, as an illustration (test-split numbering; pass@1 in Table~\ref{tab:pass} is the full MBPP test set).
+Recursively (classic) or by a list comprehension (AcroSplit), convert nested string fields to floats.
 Both completions are comment-free.
-AcroSplit uses $20$ embedding steps (density $0.22$) and recovers the $4$-bit payload \texttt{0100} in full.
-The two programs differ in identifiers, control structure, and \texttt{str} vs.\ \texttt{repr}---the kind of variation the mass-balanced split is meant to harvest.
+AcroSplit uses $20$ embedding steps (density $0.22$) and recovers the $4$-bit payload \texttt{0100} in full ($5$ votes per bit on an unedited replay).
+The two programs differ in identifiers, control structure, and \texttt{str} vs.\ \texttt{repr}---the kind of variation the split is meant to harvest.
 
 \begin{figure*}[t]
 \centering
@@ -323,10 +356,11 @@ def list\_to\_float(lst):\\
 \ind{1}]\\
 \ind{1}return repr(result)%
 }%
-\caption{Same MBPP task, both programs pass the unit tests.
+\caption{Same MBPP task~117, both programs pass the unit tests.
 Left: classic sampling (original).
 Right: AcroSplit (watermarked; $20$ cues).
-The $4$-bit message is retrieved by majority vote over those cues.}
+The $4$-bit message is retrieved by majority vote over those cues.
+The figure is an illustration; it is not drawn from the MBPP train split.}
 \label{fig:sidebyside}
 \end{figure*}
 
@@ -335,9 +369,10 @@ The $4$-bit message is retrieved by majority vote over those cues.}
 
 Token density is hideable bits per token.
 ACW \citep{li2024acw} and SrcMarker \citep{yang2024srcmarker} post-process a finished program: each applicable transform (or name rewrite) is one bit.
-On 539 HumanEval and MBPP snippets that yields $0.056$ and $0.061$ bits/token---about one bit every 16--18 tokens.
-AcroSplit instead spends a bit at every splittable decoding step.
-On Qwen3.8-27B that is $0.159$ bits/token on InstructHumanEval and $0.180$ on MBPP (Figure~\ref{fig:density}), roughly $3\times$ denser.
+On $538$ HumanEval and MBPP \emph{source} snippets ($164{+}374$) that static channel is $0.050$ (ACW) and $0.052$ (SrcMarker) bits/token on HumanEval, and $0.058$ and $0.065$ on MBPP---about one bit every $15$--$20$ tokens.
+Those densities are measured on original human/reference files.
+AcroSplit densities are measured on \emph{generated} completions, so the comparison is indicative, not matched.
+On Qwen3.8-27B-NVFP4 AcroSplit is $0.159$ bits/token on InstructHumanEval and $0.180$ on MBPP (Figure~\ref{fig:density}), roughly $3\times$ denser than those static figures.
 
 \begin{figure}[t]
 \centering
@@ -365,15 +400,18 @@ On Qwen3.8-27B that is $0.159$ bits/token on InstructHumanEval and $0.180$ on MB
   \fill[wmlbl]  (3.30,-0.95) rectangle ++(0.24,0.20);
   \node[anchor=west] at (3.62,-0.85) {AcroSplit};
 \end{tikzpicture}
-\caption{Bits per token.}
+\caption{Bits per token.
+ACW/SrcMarker: static capacity on original snippets.
+AcroSplit: cues per generated token on Qwen3.8-27B-NVFP4.}
 \label{fig:density}
 \end{figure}
 
 Bit accuracy (BitAcc) is the fraction of embedded bits recovered in the clear.
 ACW checks whether each transform was applied; a transform that already matches by chance is an error, so BitAcc averages $97.2\%$ \citep{li2024acw}.
-SrcMarker learns which transforms and names to use; BitAcc is $97.3\%$ on Java \citep{yang2024srcmarker}.
-AcroSplit reveal replays the same keyed split.
-The replay is deterministic, so the votes for one message index agree, and every cue is recovered: BitAcc is $100\%$.
+SrcMarker learns which transforms and names to use; the $97.3\%$ figure is on Java (CSN-Java), not Python \citep{yang2024srcmarker}.
+AcroSplit reveal replays the same keyed split on the same token ids.
+The replay is deterministic, so the votes for one message index agree, and every cue is recovered: BitAcc is $100\%$ in that setting.
+That is an easier extraction problem than reading bits from source with no model.
 
 \begin{table}[t]
 \centering
@@ -388,9 +426,9 @@ AcroSplit & $100$ \\
 \bottomrule
 \end{tabular}
 \caption{BitAcc.
-ACW: mean over 4-bit encodings, uncorrected \citep{li2024acw}.
+ACW: mean over 4-bit encodings, uncorrected, on source transforms \citep{li2024acw}.
 SrcMarker: $SrcMarker_{\mathrm{TE}}$ on CSN-Java \citep{yang2024srcmarker}.
-AcroSplit: cue-level recovery on Qwen3.8-27B.}
+AcroSplit: cue-level recovery on Qwen3.8-27B-NVFP4 given exact token ids, the same model, filters and key.}
 \label{tab:bitacc}
 \end{table}
 
@@ -399,10 +437,9 @@ AcroSplit: cue-level recovery on Qwen3.8-27B.}
 
 AcroSplit is applied after the filtered next-token distribution is already known.
 The extra work is a partition of that shortlist and a draw from one side.
-We measure end-to-end speed in tokens per second.
-
-Classic sampling produces $2.381$ tokens/s and AcroSplit $2.370$ tokens/s (Table~\ref{tab:overhead}).
-The two rates match.
+Table~\ref{tab:overhead} reports \emph{end-to-end} generation speed in tokens per second on the 27B endpoint, not per-step CPU time.
+Classic sampling produces $2.381$ tokens/s and AcroSplit $2.370$ tokens/s.
+The split is not the bottleneck; serving is.
 
 \begin{table}[t]
 \centering
@@ -414,7 +451,7 @@ The two rates match.
 Tokens/s & $2.381$ & $2.370$ \\
 \bottomrule
 \end{tabular}
-\caption{Generation throughput (tokens/s).}
+\caption{End-to-end generation throughput (tokens per second), not milliseconds per decoding step.}
 \label{tab:overhead}
 \end{table}
 
@@ -422,31 +459,28 @@ Tokens/s & $2.381$ & $2.370$ \\
 \label{sec:pass}
 
 Table~\ref{tab:pass} compares functional pass@1 of classic sampling against AcroSplit.
-The runs share the prompts and the decoding filters: temperature, top-$k$, and nucleus.
-Because the split balances probability mass, either message bit stays a plausible continuation under the model.
+The runs share the prompts and the decoding filters: temperature, top-$k$ (capped by the top-$20$ backend), and nucleus.
+When the split is unbalanced, forcing $L_b$ changes the continuation and can fail a unit test.
 Relative change is $(w-u)/u$ against the matched classic run.
 
-On Qwen3.8-27B, AcroSplit loses $1.8$ points ($2.1\%$ relative) on InstructHumanEval and $2.0$ points ($2.8\%$ relative) on full MBPP.
+On Qwen3.8-27B-NVFP4, AcroSplit loses $1.8$ points ($2.1\%$ relative) on InstructHumanEval ($n{=}164$) and $2.0$ points ($2.8\%$ relative) on full MBPP.
 Most classic-passing tasks still pass with the watermark.
 Density and cue-level BitAcc on that model are those of Section~\ref{sec:density}.
 
 \subsection{Additional models on vLLM}
 \label{sec:vllm}
 
-The Qwen3.8-27B numbers use an OpenAI-compatible completions API that returns the top-$20$ log-probabilities at every step; AcroSplit then splits that shortlist on the client.
-The same protocol runs on other vLLM endpoints without changing the split.
-
 \paragraph{Qwen3-8B, HumanEval.}
 We generate classic and AcroSplit completions for all $164$ HumanEval tasks ($T{=}0.9$, nucleus $0.9$, top-$20$).
 Classic pass@1 is $82.3\%$ and AcroSplit $80.5\%$ (relative $\Delta=-2.2\%$; Table~\ref{tab:pass}).
 Mean density is $0.145$ bits/token.
-Reveal replays the same keyed split, so BitAcc is $100\%$.
+Reveal on the stored token ids recovers every cue (BitAcc $100\%$).
 The drop in pass@1 is a utility cost of the split, not a failure of reveal.
 
 \paragraph{DeepSeek-Coder-6.7B-Instruct, HumanEval.}
 The same HumanEval suite on a vLLM DeepSeek-Coder-6.7B-Instruct endpoint yields classic pass@1 $67.1\%$ and AcroSplit $65.0\%$ (relative $\Delta=-3.1\%$), density $0.138$ bits/token, and BitAcc $100\%$.
 
-In both cases the extra decision work after the top-$20$ list is already available remains sub-millisecond, consistent with Section~\ref{sec:overhead}: serving, not the split, dominates wall time.
+In both cases the extra decision work after the top-$20$ list is already available remains negligible next to the tokens/s in Table~\ref{tab:overhead}.
 
 \begin{table*}[t]
 \centering
@@ -455,18 +489,54 @@ In both cases the extra decision work after the top-$20$ list is already availab
 \toprule
 Model & Dataset & Classic & AcroSplit & Rel.\ $\Delta$ & Dens. & BitAcc \\
 \midrule
-Qwen3.8-27B & InstructHumanEval & $86.6$ & $84.8$ & $-2.1\%$ & $0.159$ & $100$ \\
-Qwen3.8-27B & MBPP & $71.0$ & $69.0$ & $-2.8\%$ & $0.180$ & $100$ \\
+Qwen3.8-27B-NVFP4 & InstructHumanEval & $86.6$ & $84.8$ & $-2.1\%$ & $0.159$ & $100$ \\
+Qwen3.8-27B-NVFP4 & MBPP & $71.0$ & $69.0$ & $-2.8\%$ & $0.180$ & $100$ \\
 Qwen3-8B & HumanEval & $82.3$ & $80.5$ & $-2.2\%$ & $0.145$ & $100$ \\
 DeepSeek-Coder-6.7B & HumanEval & $67.1$ & $65.0$ & $-3.1\%$ & $0.138$ & $100$ \\
 \bottomrule
 \end{tabular}
 \caption{Pass@1 (\%), mean density (bits/token), and cue-level BitAcc (\%).
-InstructHumanEval and HumanEval $n{=}164$; MBPP is the full test set.
-BitAcc is $100\%$ because reveal replays the same keyed split.
-Rel.\ $\Delta$ is $(w-u)/u$ vs.\ classic sampling.}
+InstructHumanEval, HumanEval and MBPP.
 \label{tab:pass}
 \end{table*}
+
+\section{Limitations}
+\label{sec:limitations}
+
+AcroSplit is a cheap filter-respecting payload channel.
+It is not, as currently evaluated, a robust public watermark.
+
+\paragraph{Extraction assumptions.}
+$100\%$ BitAcc holds for exact token ids.
+Printed source, retokenization, or a different tokenizer can desynchronize cues.
+Reveal also needs the same model and the same temperature / top-$k$ / nucleus (including the top-$20$ truncation of the serving API).
+
+\paragraph{No robustness or detection study.}
+We do not measure renaming, reformatting, refactoring, partial deletion, or copy-paste.
+We do not report false-positive rates of $W$ (or of the recovered bitstring) on human-written or classic-sampled code.
+By construction $W>0$ on every watermarked trace.
+
+\paragraph{Baselines.}
+Tables~\ref{tab:bitacc}--\ref{tab:pass} compare against ACW and SrcMarker, which edit finished source and, for SrcMarker BitAcc, Java.
+We do not report numbers against Balance-Marking, MPAC, CodeIP, SWEET, BiMark, MajorMark, XMark, WorldCup or WeaveMark, or against distribution-preserving steganography (Meteor, Discop).
+Those are the fair generation-time comparisons.
+
+\paragraph{Distribution.}
+Hard-masking $L_b$ changes the model's distribution whenever the split is uneven.
+That is enough to move pass@1 and could in principle be steganalyzed.
+We do not report KL or a detector.
+
+\paragraph{Repetition.}
+Cycling a $4$-bit string with majority vote does not add error correction on an unedited replay, because every vote agrees.
+An entropy or balance gate before a step carries a bit, and a real error-correcting code, are left to future work.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+AcroSplit splits the sampler's real shortlist with a fill-lighter rule and spends one bit per non-skipped step.
+The implementation cost is negligible, density on code is several times a static AST channel, and pass@1 drops by a few relative percent.
+The novelty relative to Balance-Marking is the shortlist-only hard split, not the two-list idea itself.
+Used as a watermark, the method still needs robustness and false-positive tests; used as steganography, it still needs a comparison with distribution-preserving encoders.
 
 \bibliography{custom}
 

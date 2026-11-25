@@ -1,8 +1,8 @@
 """
 Remote LLM engine backed by a vLLM OpenAI-compatible HTTP API.
 
-Tokenizer is loaded locally (must match the served model). Next-token logits
-come from vLLM prompt_logprobs (top 20).
+Tokenizer is loaded locally and must be the same Hub id as the served model.
+Next-token logits come from vLLM ``prompt_logprobs`` (at most 20).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from engine.sampling import (
     top_k_filter,
     top_p_filter,
 )
-from engine.utils import compute_entropy
+from engine.utils import compute_entropy, latin1_safe_text
 from engine.vllm_client import (
     DEFAULT_VLLM_MODEL,
     DEFAULT_VLLM_URL,
@@ -83,7 +83,7 @@ class RemoteVLLMEngine:
         Generation via remote logits.
 
         Without a watermark: one /v1/completions call (fast), detokenized locally
-        from token pieces so DeepSeek ``Ċ`` newlines are preserved.
+        from token pieces so BPE whitespace glyphs (``Ġ`` / ``Ċ``) stay correct.
 
         With a watermark: token-by-token next_logits + AcroSplit apply (same
         sampling loop as LLMEngine).
@@ -125,7 +125,9 @@ class RemoteVLLMEngine:
         payload = {
             "model": self.client.model,
             # Prefer token ids so server tokenization matches local tokenizer.
-            "prompt": self.tokenizer.encode(prompt, add_special_tokens=False),
+            "prompt": self.tokenizer.encode(
+                latin1_safe_text(prompt), add_special_tokens=False
+            ),
             "max_tokens": max_new_tokens or 1024,
             "temperature": temperature,
             "top_p": top_p,
@@ -187,7 +189,7 @@ class RemoteVLLMEngine:
             torch.manual_seed(seed)
         stops = stop_strings or []
         # Match hide_completion / local LLMEngine encode so reveal sees the same prefix.
-        prompt_ids = self.tokenizer.encode(prompt)
+        prompt_ids = self.tokenizer.encode(latin1_safe_text(prompt))
         if not prompt_ids:
             raise ValueError("prompt encodes to empty token list")
 
@@ -227,7 +229,10 @@ class RemoteVLLMEngine:
             if apply_after:
                 processed = watermark.apply(processed, hist[0])
 
-            if temperature == 0.0:
+            if hasattr(watermark, "sample_token"):
+                next_id = watermark.sample_token(processed, hist[0])
+                probs = torch.softmax(processed, dim=-1)
+            elif temperature == 0.0:
                 probs = torch.zeros_like(processed)
                 probs[0, torch.argmax(processed, dim=-1)] = 1.0
                 next_id = sample_greedy(processed)

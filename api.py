@@ -19,7 +19,8 @@ from typing import Sequence
 
 import torch
 
-from engine.acrosplit import AcroSplitWatermark, decode_resync, majority_decode
+from engine.acrosplit import AcroSplitWatermark, decode_channel, decode_resync, majority_decode
+from engine.utils import latin1_safe_text
 from engine.llm_engine import LLMEngine
 from engine.remote_engine import RemoteVLLMEngine
 from engine.vllm_client import DEFAULT_VLLM_MODEL, DEFAULT_VLLM_URL, VLLM_MAX_LOGPROBS
@@ -36,17 +37,12 @@ DEFAULT_SYSTEM_PROMPT = (
 CODE_ASSISTANT_PREFILL = "```python\n"
 CODE_STOP_STRINGS = ("```", "<|EOT|>")
 
-DEFAULT_MODEL = (
-    "models/Qwen2.5-Coder-7B/"
-    "models--Qwen--Qwen2.5-Coder-7B/"
-    "snapshots/0396a76181e127dfc13e5c5ec48a8cee09938b02"
-)
-
-DEEPSEEK_MODEL = (
-    "models/deepseek-coder-1.3b-instruct/"
-    "models--deepseek-ai--deepseek-coder-1.3b-instruct/"
-    "snapshots/e063262dac8366fc1f28a4da0ff3c50ea66259ca"
-)
+# Local Transformers default: fits a single GPU. Paper tables also report
+# Qwen/Qwen3-8B and deepseek-ai/deepseek-coder-6.7b-instruct on vLLM.
+# The 27B paper checkpoint is Inferact/Qwen3.8-27B-NVFP4 (vLLM / Foyer only).
+DEFAULT_MODEL = "Qwen/Qwen3-8B"
+DEEPSEEK_MODEL = "deepseek-ai/deepseek-coder-6.7b-instruct"
+PAPER_VLLM_27B = "Inferact/Qwen3.8-27B-NVFP4"
 
 
 def _as_bits(message: str | Sequence[int]) -> list[int]:
@@ -65,7 +61,7 @@ def _bits_to_str(bits: Sequence[int]) -> str:
 
 
 def normalize_generated_code(text: str) -> str:
-    """Fix common DeepSeek / fence artifacts so generated code can compile."""
+    """Fix BPE whitespace glyphs and fence artifacts so generated code can compile."""
     text = text.replace("Ċ", "\n").replace("Ġ", " ").replace("č", "\t")
     for bad, good in (
         ("â€™", "'"),
@@ -208,6 +204,8 @@ class AcroSplitAPI:
         repetition_penalty: float = 1.0,
         seed: int | None = None,
         bit_index: str = "sequential",
+        coding: str = "hamming74",
+        min_list_mass: float = 0.0,
     ):
         if backend not in ("local", "vllm"):
             raise ValueError("backend must be 'local' or 'vllm'")
@@ -224,6 +222,8 @@ class AcroSplitAPI:
         self.repetition_penalty = repetition_penalty
         self.seed = seed
         self.bit_index = bit_index
+        self.coding = coding
+        self.min_list_mass = min_list_mass
 
         if backend == "vllm":
             served = vllm_model or os.getenv("VLLM_MODEL") or DEFAULT_VLLM_MODEL
@@ -253,7 +253,12 @@ class AcroSplitAPI:
         tokenizer: str | None = None,
         **kwargs,
     ) -> "AcroSplitAPI":
-        """Hide/reveal through a running OpenAI-compatible vLLM server."""
+        """Hide/reveal through a running OpenAI-compatible vLLM server.
+
+        vLLM exposes at most 20 logprobs, so ``top_k`` defaults to 20 unless
+        the caller sets it.
+        """
+        kwargs.setdefault("top_k", 20)
         return cls(
             model_path=tokenizer or model,
             backend="vllm",
@@ -278,14 +283,19 @@ class AcroSplitAPI:
             {"role": "system", "content": sys_msg},
             {"role": "user", "content": prompt},
         ]
-        return (
-            self.engine.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            + CODE_ASSISTANT_PREFILL
+        kw = dict(
+            tokenize=False,
+            add_generation_prompt=True,
         )
+        try:
+            rendered = self.engine.tokenizer.apply_chat_template(
+                messages,
+                enable_thinking=False,
+                **kw,
+            )
+        except TypeError:
+            rendered = self.engine.tokenizer.apply_chat_template(messages, **kw)
+        return latin1_safe_text(rendered) + CODE_ASSISTANT_PREFILL
 
     def check_syntax(self, code: str) -> SyntaxResult:
         code = normalize_generated_code(_strip_code_fences(code))
@@ -314,6 +324,8 @@ class AcroSplitAPI:
         seed: int | None = None,
         max_new_tokens: int | None = None,
         bit_index: str | None = None,
+        coding: str | None = None,
+        min_list_mass: float | None = None,
     ) -> HideResult:
         bits = _as_bits(message)
         model_prompt = self.build_model_prompt(prompt, system_prompt=system_prompt)
@@ -323,6 +335,8 @@ class AcroSplitAPI:
             secret_key=secret_key,
             context_size=context_size,
             bit_index=bit_index,
+            coding=coding,
+            min_list_mass=min_list_mass,
         )
         steg.set_message(bits)
 
@@ -414,6 +428,8 @@ class AcroSplitAPI:
         min_p: float | None = None,
         repetition_penalty: float | None = None,
         bit_index: str | None = None,
+        coding: str | None = None,
+        min_list_mass: float | None = None,
         resync: bool = False,
     ) -> RevealResult:
         steg = self._make_steg(
@@ -421,6 +437,8 @@ class AcroSplitAPI:
             secret_key=secret_key,
             context_size=context_size,
             bit_index=bit_index,
+            coding=coding,
+            min_list_mass=min_list_mass,
         )
 
         if isinstance(source, HideResult):
@@ -496,6 +514,8 @@ class AcroSplitAPI:
         secret_key: str | None = None,
         context_size: int | None = None,
         bit_index: str | None = None,
+        coding: str | None = None,
+        min_list_mass: float | None = None,
     ) -> AcroSplitWatermark:
         steg = AcroSplitWatermark(
             secret_key=self.secret_key if secret_key is None else secret_key,
@@ -503,8 +523,61 @@ class AcroSplitAPI:
             whitelist_path=whitelist_path or self.whitelist_path,
             bit_index=self.bit_index if bit_index is None else bit_index,
             eos_token_id=getattr(self.engine.tokenizer, "eos_token_id", None),
+            coding=self.coding if coding is None else coding,
+            min_list_mass=self.min_list_mass if min_list_mass is None else min_list_mass,
         )
         return steg
+
+    def _ensure_channel(self, steg: AcroSplitWatermark, payload_length: int) -> int:
+        if not steg.message:
+            steg.set_message([0] * payload_length)
+        return steg.channel_length()
+
+    def _payload_from_votes(
+        self,
+        steg: AcroSplitWatermark,
+        bit_votes: list[list[int]],
+        raw_bits: list[int],
+        payload_length: int,
+        *,
+        resync: bool,
+    ) -> tuple[list[int], dict]:
+        channel_len = max(steg.channel_length(), 1)
+        if resync:
+            channel, meta = decode_resync(raw_bits, channel_len)
+        else:
+            channel = majority_decode(bit_votes)
+            meta = {"mode": "off"}
+        payload = decode_channel(channel, payload_length, steg.coding)
+        return payload, meta
+
+    def _observe_cue(
+        self,
+        steg: AcroSplitWatermark,
+        filtered: torch.Tensor,
+        history: list[int],
+        tok: int,
+        channel_len: int,
+        cue_steps: int,
+        bit_votes: list[list[int]],
+        raw_bits: list[int],
+    ) -> tuple[int, int, int, int]:
+        """Returns (cue_steps, green_hits, red_hits, singleton). Hits are 0/1."""
+        green, red, _, _, singleton = steg.partition_from_logits(filtered, history)
+        bit_pos = steg.message_slot(history, cue_steps, channel_len)
+        green_hit = red_hit = 0
+        if tok in green:
+            observed = 1
+            green_hit = 1
+        elif tok in red:
+            observed = 0
+            red_hit = 1
+        else:
+            observed = -1
+        if observed in (0, 1):
+            bit_votes[bit_pos].append(observed)
+            raw_bits.append(observed)
+        return cue_steps + 1, green_hit, red_hit, int(bool(singleton))
 
     def _reveal_tokens_remote(
         self,
@@ -520,7 +593,8 @@ class AcroSplitAPI:
         repetition_penalty: float = 1.0,
         resync: bool = False,
     ) -> dict:
-        bit_votes: list[list[int]] = [[] for _ in range(message_length)]
+        channel_len = self._ensure_channel(steg, message_length)
+        bit_votes: list[list[int]] = [[] for _ in range(channel_len)]
         raw_bits: list[int] = []
         green_hits = 0
         red_hits = 0
@@ -546,36 +620,19 @@ class AcroSplitAPI:
                 repetition_penalty=repetition_penalty,
                 generated_ids=history,
             )
-            if steg.eos_in_candidates(filtered):
+            if not steg.should_embed(filtered, history):
                 continue
-            if not steg.is_splittable_cue(filtered, history):
-                continue
-            green, red, _, _, singleton = steg.partition_from_logits(
-                filtered, history
+            cue_steps, gh, rh, sg = self._observe_cue(
+                steg, filtered, history, tok, channel_len, cue_steps,
+                bit_votes, raw_bits,
             )
-            if not green or not red:
-                continue
-            if singleton:
-                singleton_green += 1
-            bit_pos = steg.message_slot(history, cue_steps, message_length)
-            cue_steps += 1
-            if tok in green:
-                observed = 1
-                green_hits += 1
-            elif tok in red:
-                observed = 0
-                red_hits += 1
-            else:
-                observed = -1
-            if observed in (0, 1):
-                bit_votes[bit_pos].append(observed)
-                raw_bits.append(observed)
+            green_hits += gh
+            red_hits += rh
+            singleton_green += sg
 
-        if resync:
-            recovered, resync_meta = decode_resync(raw_bits, message_length)
-        else:
-            recovered = majority_decode(bit_votes)
-            resync_meta = {"mode": "off"}
+        recovered, resync_meta = self._payload_from_votes(
+            steg, bit_votes, raw_bits, message_length, resync=resync
+        )
 
         return {
             "message": recovered,
@@ -605,7 +662,8 @@ class AcroSplitAPI:
         repetition_penalty: float = 1.0,
         resync: bool = False,
     ) -> dict:
-        bit_votes: list[list[int]] = [[] for _ in range(message_length)]
+        channel_len = self._ensure_channel(steg, message_length)
+        bit_votes: list[list[int]] = [[] for _ in range(channel_len)]
         raw_bits: list[int] = []
         green_hits = 0
         red_hits = 0
@@ -618,7 +676,7 @@ class AcroSplitAPI:
                 "message_bits": "0" * message_length,
                 "raw_bits": [],
                 "cue_steps": 0,
-                "votes_per_bit": [0] * message_length,
+                "votes_per_bit": [0] * channel_len,
                 "green_hits": 0,
                 "red_hits": 0,
                 "singleton_green_steps": 0,
@@ -660,31 +718,14 @@ class AcroSplitAPI:
                 repetition_penalty=repetition_penalty,
                 generated_ids=history,
             )
-            if not steg.eos_in_candidates(filtered) and steg.is_splittable_cue(
-                filtered, history
-            ):
-                green, red, _, _, singleton = steg.partition_from_logits(
-                    filtered, history
+            if steg.should_embed(filtered, history):
+                cue_steps, gh, rh, sg = self._observe_cue(
+                    steg, filtered, history, tok, channel_len, cue_steps,
+                    bit_votes, raw_bits,
                 )
-                if green and red:
-                    if singleton:
-                        singleton_green += 1
-
-                    bit_pos = steg.message_slot(history, cue_steps, message_length)
-                    cue_steps += 1
-
-                    if tok in green:
-                        observed = 1
-                        green_hits += 1
-                    elif tok in red:
-                        observed = 0
-                        red_hits += 1
-                    else:
-                        observed = -1
-
-                    if observed in (0, 1):
-                        bit_votes[bit_pos].append(observed)
-                        raw_bits.append(observed)
+                green_hits += gh
+                red_hits += rh
+                singleton_green += sg
 
             step_in = torch.tensor([[tok]], dtype=torch.long, device=device)
             outputs = self.engine.model(
@@ -695,11 +736,9 @@ class AcroSplitAPI:
             past = outputs.past_key_values
             next_logits = outputs.logits[:, -1, :]
 
-        if resync:
-            recovered, resync_meta = decode_resync(raw_bits, message_length)
-        else:
-            recovered = majority_decode(bit_votes)
-            resync_meta = {"mode": "off"}
+        recovered, resync_meta = self._payload_from_votes(
+            steg, bit_votes, raw_bits, message_length, resync=resync
+        )
 
         return {
             "message": recovered,

@@ -13,7 +13,22 @@ Two ways to run it:
 
 1. **Local GPU** — Transformers loads the weights in this process (CUDA).
 2. **vLLM** — a separate OpenAI-compatible server; this repo only sends
-   one-token `/v1/completions` calls with logprobs.
+   `/v1/completions` calls with logprobs.
+
+**Models in the paper vs what this repo defaults to**
+
+| Role | Hub / serve id |
+|---|---|
+| Paper, 27B tables | `Inferact/Qwen3.8-27B-NVFP4` (vLLM / Foyer, NVFP4; not a local Transformers default) |
+| Paper + local/vLLM default | `Qwen/Qwen3-8B` |
+| Paper, extra HumanEval run | `deepseek-ai/deepseek-coder-6.7b-instruct` |
+
+The tokenizer loaded here **must be the same id** as the generator. There is
+no shared DeepSeek vocabulary: a Qwen serve needs a Qwen tokenizer.
+
+vLLM returns at most **20** log-probabilities. AcroSplit then splits that
+shortlist (`top_k` is effectively ≤ 20 on this backend). Start the server
+with `--max-logprobs 20`.
 
 ---
 
@@ -48,7 +63,7 @@ PROMPT = "Write a Python function that returns True if n is even."
 MESSAGE = "10110"   # bits to hide; any non-empty string of 0/1
 
 api = AcroSplitAPI(
-    model_path="Qwen/Qwen3-8B",  # or "deepseek-ai/deepseek-coder-1.3b-instruct"
+    model_path="Qwen/Qwen3-8B",  # or "deepseek-ai/deepseek-coder-6.7b-instruct"
     temperature=0.9,
     top_p=0.9,
     top_k=50,
@@ -173,8 +188,22 @@ export VLLM_USER=test
 export VLLM_PASSWORD='your-password'
 ```
 
-Aliases: `FOYER_BASE_URL`, `FOYER_MODEL`, `FOYER_USER`, `FOYER_PASSWORD`.
+Aliases: `FOYER_BASE_URL`, `FOYER_MODEL`, `FOYER_USER` / `FOYER_USERNAME`, `FOYER_PASSWORD`.
 A URL that already ends in `/v1` is fine.
+
+Paper 27B endpoint (Foyer / matching vLLM serve id):
+
+```bash
+export VLLM_MODEL=Inferact/Qwen3.8-27B-NVFP4
+```
+
+```python
+api = AcroSplitAPI.from_vllm(
+    model="Inferact/Qwen3.8-27B-NVFP4",
+    url=os.environ["VLLM_BASE_URL"],
+    top_k=20,
+)
+```
 
 Minimal `from_vllm` when env is set:
 

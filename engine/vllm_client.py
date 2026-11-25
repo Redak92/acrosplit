@@ -1,17 +1,25 @@
 """
 OpenAI-compatible vLLM HTTP client for token-level AcroSplit.
 
-Uses /v1/completions with prompt token ids + top logprobs (server max 20).
+Uses /v1/completions with prompt token ids + top logprobs.
+The server cap is 20 logprobs (``VLLM_MAX_LOGPROBS``); logits are sparse over
+that shortlist, then mapped into the *served model's* tokenizer vocab.
+There is no shared DeepSeek vocabulary: ``vocab_size`` comes from the
+tokenizer loaded for the same Hub id as ``vllm serve``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
 
 import requests
+from requests.auth import HTTPBasicAuth
 import torch
+
+from engine.utils import latin1_safe_text
 
 # vLLM OpenAI server default. Override with VLLM_BASE_URL.
 DEFAULT_VLLM_URL = os.getenv("VLLM_BASE_URL") or os.getenv(
@@ -34,8 +42,18 @@ def _optional_auth() -> tuple[str, str] | None:
     user = os.getenv("VLLM_USER") or os.getenv("FOYER_USER") or os.getenv("FOYER_USERNAME")
     password = os.getenv("VLLM_PASSWORD") or os.getenv("FOYER_PASSWORD")
     if user and password:
-        return user, password
+        return str(user).strip(), str(password).strip()
     return None
+
+
+def _json_latin1_safe(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return latin1_safe_text(obj)
+    if isinstance(obj, list):
+        return [_json_latin1_safe(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _json_latin1_safe(v) for k, v in obj.items()}
+    return obj
 
 
 def fix_tokenizer_artifacts(text: str) -> str:
@@ -58,19 +76,41 @@ class VLLMClient:
         self.timeout = timeout
         self.max_logprobs = min(max_logprobs, VLLM_MAX_LOGPROBS)
         self.max_retries = max(1, max_retries)
-        self.session = requests.Session()
         creds = auth if auth is not None else _optional_auth()
+        self.auth: HTTPBasicAuth | None = None
         if creds:
-            self.session.auth = creds
-        self.session.headers.update({"Content-Type": "application/json"})
+            user, password = creds
+            self.auth = HTTPBasicAuth(user, password)
+        self.session = self._new_session()
+
+    def _new_session(self) -> requests.Session:
+        session = requests.Session()
+        session.trust_env = False
+        session.headers["Content-Type"] = "application/json"
+        session.headers["Accept"] = "application/json"
+        return session
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         last_err: Exception | None = None
+        body = json.dumps(_json_latin1_safe(payload), ensure_ascii=True).encode("utf-8")
+        retry_status = {401, 429, 502, 503, 504}
         for attempt in range(self.max_retries):
             try:
-                r = self.session.post(url, json=payload, timeout=self.timeout)
-                if r.status_code in (502, 503, 504) and attempt + 1 < self.max_retries:
+                r = self.session.post(
+                    url,
+                    data=body,
+                    timeout=self.timeout,
+                    auth=self.auth,
+                )
+                if r.status_code in retry_status and attempt + 1 < self.max_retries:
+                    last_err = requests.HTTPError(
+                        f"{r.status_code} {r.reason} for url: {url}",
+                        response=r,
+                    )
+                    if r.status_code == 401:
+                        self.session.close()
+                        self.session = self._new_session()
                     time.sleep(min(2**attempt, 16))
                     continue
                 r.raise_for_status()
